@@ -1,0 +1,5 @@
+mediapipe
+PySide6
+opencv-python
+speechrecognition
+pyautogui 
