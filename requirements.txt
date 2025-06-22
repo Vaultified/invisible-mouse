@@ -2,4 +2,7 @@ mediapipe
 PySide6
 opencv-python
 speechrecognition
-pyautogui 
+pyautogui
+pyinstaller
+pyaudio
+numpy 
