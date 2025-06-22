@@ -14,6 +14,7 @@ from src.hand_tracker import HandTracker
 from src.gesture_controller import GestureController
 from src.voice_controller import VoiceController
 
+APP_NAME = "Invisible Mouse - Hand & Voice Control"
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -38,7 +39,7 @@ class HandTrackingThread(QThread):
     frame_updated = Signal(QImage)
     hand_landmarks_signal = Signal(list)
 
-    def __init__(self, hand_tracker, max_fps=20):
+    def __init__(self, hand_tracker, max_fps=30):
         super().__init__()
         self.hand_tracker = hand_tracker
         self.running = False
@@ -46,8 +47,8 @@ class HandTrackingThread(QThread):
 
     def run(self):
         self.running = True
-        last_time = time.time()
         while self.running:
+            start_time = time.time()
             try:
                 hand_landmarks_list, frame = self.hand_tracker.get_hand_landmarks(return_frame=True)
                 if frame is not None:
@@ -58,14 +59,13 @@ class HandTrackingThread(QThread):
                     self.frame_updated.emit(qt_image)
                 if hand_landmarks_list:
                     self.hand_landmarks_signal.emit(hand_landmarks_list)
-                # Limit frame rate
-                elapsed = time.time() - last_time
-                sleep_time = max(0, 1.0 / self.max_fps - elapsed)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                last_time = time.time()
             except Exception as e:
                 logging.error(f"HandTrackingThread error: {e}")
+            elapsed = time.time() - start_time
+            sleep_time = max(0, 1.0 / self.max_fps - elapsed)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            logging.debug(f"Frame time: {elapsed:.4f}s, sleep: {sleep_time:.4f}s")
 
     def stop(self):
         self.running = False
@@ -74,7 +74,8 @@ class HandTrackingThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Hand Tracking Gesture Control System")
+        self.setWindowTitle(APP_NAME)
+        QApplication.setApplicationName(APP_NAME)
         self.config = load_config()
         try:
             self.hand_tracker = HandTracker()

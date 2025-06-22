@@ -38,8 +38,10 @@ class GestureController:
 
     def move_cursor_with_hand(self, hand_landmarks):
         if not hand_landmarks or len(hand_landmarks) < 9:
+            print("No hand landmarks or not enough landmarks detected.")
             return
         x_norm, y_norm, _ = hand_landmarks[8]
+        print(f"Index finger tip (normalized): x={x_norm:.3f}, y={y_norm:.3f}")
         # Dead zone: ignore small movements
         if self.prev_x is not None and self.prev_y is not None:
             prev_x_norm = self.prev_x / self.screen_width
@@ -47,6 +49,7 @@ class GestureController:
             dx = abs(x_norm - prev_x_norm)
             dy = abs(y_norm - prev_y_norm)
             if dx < self.dead_zone and dy < self.dead_zone:
+                print(f"In dead zone: dx={dx:.4f}, dy={dy:.4f}, dead_zone={self.dead_zone}")
                 return
         # Sensitivity
         x_norm = np.clip(x_norm * self.sensitivity, 0, 1)
@@ -73,6 +76,7 @@ class GestureController:
         self.y_history.append(y)
         smooth_x = int(np.mean(self.x_history))
         smooth_y = int(np.mean(self.y_history))
+        print(f"Moving cursor to: {smooth_x}, {smooth_y}")
         pyautogui.moveTo(smooth_x, smooth_y)
         self.prev_x, self.prev_y = smooth_x, smooth_y
 
