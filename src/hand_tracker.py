@@ -15,11 +15,11 @@ class HandTracker:
         if not self.cap.isOpened():
             raise RuntimeError("Error: Could not open camera.")
 
-    def get_hand_landmarks(self):
+    def get_hand_landmarks(self, return_frame=False):
         success, frame = self.cap.read()
         if not success:
             print("Error: Failed to capture frame from camera.")
-            return []
+            return ([] if not return_frame else ([], None))
         # Flip the frame for natural interaction
         frame = cv2.flip(frame, 1)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -31,6 +31,10 @@ class HandTracker:
                     (lm.x, lm.y, lm.z) for lm in hand_landmarks.landmark
                 ]
                 hand_landmarks_list.append(normalized_landmarks)
+                # Draw landmarks for preview
+                self.mp_drawing.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+        if return_frame:
+            return hand_landmarks_list, frame
         return hand_landmarks_list
 
     def release(self):
