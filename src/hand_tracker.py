@@ -20,6 +20,8 @@ class HandTracker:
         # Set buffer size to 1 if supported (reduces lag)
         if hasattr(cv2, 'CAP_PROP_BUFFERSIZE'):
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.frame_width = frame_width
+        self.frame_height = frame_height
 
     def get_hand_landmarks(self, return_frame=False):
         # Drop old frames for real-time performance
@@ -29,8 +31,7 @@ class HandTracker:
         if not success or frame is None:
             print("Error: Failed to capture frame from camera.")
             return ([] if not return_frame else ([], None))
-        # Resize for performance if needed
-        frame = cv2.resize(frame, (640, 480))
+        # Do NOT resize here; use full camera frame for hand tracking
         # Flip the frame for natural interaction
         frame = cv2.flip(frame, 1)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
-    QLabel, QSlider, QCheckBox, QGroupBox, QFormLayout, QSpinBox, QMessageBox, QDoubleSpinBox
+    QLabel, QSlider, QCheckBox, QGroupBox, QFormLayout, QSpinBox, QMessageBox, QDoubleSpinBox, QStatusBar
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap, QKeySequence, QCloseEvent, QShortcut
 import cv2
 import sys
@@ -13,11 +13,10 @@ import time
 from src.hand_tracker import HandTracker
 from src.gesture_controller import GestureController
 from src.voice_controller import VoiceController
+import pyautogui
 
 APP_NAME = "Invisible Mouse - Hand & Voice Control"
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-PREVIEW_WIDTH = 800
-PREVIEW_HEIGHT = 600
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
@@ -37,67 +36,43 @@ def save_config(config):
     except Exception as e:
         logging.error(f"Failed to save config: {e}")
 
-class HandTrackingThread(QThread):
-    frame_updated = Signal(QImage)
-    hand_landmarks_signal = Signal(list)
-
-    def __init__(self, hand_tracker, max_fps=30):
-        super().__init__()
-        self.hand_tracker = hand_tracker
-        self.running = False
-        self.max_fps = max_fps
-
-    def run(self):
-        self.running = True
-        while self.running:
-            start_time = time.time()
-            try:
-                hand_landmarks_list, frame = self.hand_tracker.get_hand_landmarks(return_frame=True)
-                if frame is not None:
-                    rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    h, w, ch = rgb_image.shape
-                    bytes_per_line = ch * w
-                    qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                    self.frame_updated.emit(qt_image)
-                if hand_landmarks_list:
-                    self.hand_landmarks_signal.emit(hand_landmarks_list)
-            except Exception as e:
-                logging.error(f"HandTrackingThread error: {e}")
-            elapsed = time.time() - start_time
-            sleep_time = max(0, 1.0 / self.max_fps - elapsed)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-            logging.debug(f"Frame time: {elapsed:.4f}s, sleep: {sleep_time:.4f}s")
-
-    def stop(self):
-        self.running = False
-        self.wait()
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         QApplication.setApplicationName(APP_NAME)
         self.config = load_config()
+        screen = QApplication.primaryScreen().geometry()
+        self.PREVIEW_WIDTH = int(screen.width() * 0.8)
+        self.PREVIEW_HEIGHT = int(screen.height() * 0.6)  # 60% height
         try:
-            self.hand_tracker = HandTracker(frame_width=PREVIEW_WIDTH, frame_height=PREVIEW_HEIGHT)
+            self.hand_tracker = HandTracker(frame_width=self.PREVIEW_WIDTH, frame_height=self.PREVIEW_HEIGHT)
         except RuntimeError as e:
             self.show_camera_error(str(e))
             self.hand_tracker = None
         self.gesture_controller = GestureController()
         self.voice_controller = VoiceController()
-        self.hand_thread = None
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_hand_tracking)
         self.init_ui()
         self.setup_shortcuts()
         self.restore_preferences()
+        self.is_tracking = False
+        self.is_dragging = False
+        self.resize(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT + 120)
+        self.move(int(screen.width() * 0.1), int(screen.height() * 0.1))
 
     def init_ui(self):
         # Controls
         self.start_btn = QPushButton("Start Hand Tracking")
         self.stop_btn = QPushButton("Stop Hand Tracking")
         self.voice_toggle = QCheckBox("Enable Voice Control")
+        self.drag_mode_toggle = QCheckBox("Enable Drag Mode (Pinch Hold)")
+        self.drag_mode_toggle.setChecked(True)
+        self.drag_mode_toggle.stateChanged.connect(self.toggle_drag_mode)
         self.preview_label = QLabel()
-        self.preview_label.setFixedSize(PREVIEW_WIDTH, PREVIEW_HEIGHT)
+        self.preview_label.setFixedSize(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
+        self.preview_label.setStyleSheet("background: #222; border: 2px solid #444;")
         self.sensitivity_slider = QSlider(Qt.Horizontal)
         self.sensitivity_slider.setMinimum(1)
         self.sensitivity_slider.setMaximum(300)
@@ -127,6 +102,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.start_btn)
         controls_layout.addWidget(self.stop_btn)
         controls_layout.addWidget(self.voice_toggle)
+        controls_layout.addWidget(self.drag_mode_toggle)
         controls_layout.addWidget(self.sensitivity_label)
         controls_layout.addWidget(self.sensitivity_slider)
 
@@ -138,6 +114,11 @@ class MainWindow(QMainWindow):
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
+
+        # Status bar for live feedback
+        self.status = QStatusBar()
+        self.setStatusBar(self.status)
+        self.status.showMessage("Ready.")
 
         # Connect signals
         self.start_btn.clicked.connect(self.start_hand_tracking)
@@ -153,7 +134,7 @@ class MainWindow(QMainWindow):
         self.shortcut_voice.activated.connect(self.toggle_voice_control_shortcut)
 
     def toggle_hand_tracking_shortcut(self):
-        if self.hand_thread and self.hand_thread.isRunning():
+        if self.is_tracking:
             self.stop_hand_tracking()
         else:
             self.start_hand_tracking()
@@ -176,30 +157,51 @@ class MainWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
 
+    def toggle_drag_mode(self, state):
+        self.gesture_controller.drag_mode = bool(state)
+
     def start_hand_tracking(self):
         if not self.hand_tracker:
             self.show_camera_error("Camera is not available.")
             return
-        if self.hand_thread and self.hand_thread.isRunning():
+        if self.is_tracking:
             return
-        self.hand_thread = HandTrackingThread(self.hand_tracker)
-        self.hand_thread.frame_updated.connect(self.update_preview)
-        self.hand_thread.hand_landmarks_signal.connect(self.handle_hand_landmarks)
-        self.hand_thread.start()
+        self.status.showMessage("Starting hand tracking...")
+        self.is_tracking = True
+        self.timer.start(1000 // 60)  # 60 FPS for ultra-smooth video
 
     def stop_hand_tracking(self):
-        if self.hand_thread:
-            self.hand_thread.stop()
-            self.hand_thread = None
+        if not self.is_tracking:
+            return
+        self.status.showMessage("Hand tracking stopped.")
+        self.is_tracking = False
+        self.timer.stop()
+        # Always release mouse if dragging
+        if self.gesture_controller.is_dragging:
+            pyautogui.mouseUp()
+            self.gesture_controller.is_dragging = False
 
-    def update_preview(self, qt_image):
-        self.preview_label.setPixmap(QPixmap.fromImage(qt_image).scaled(
-            self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-    def handle_hand_landmarks(self, hand_landmarks_list):
+    def update_hand_tracking(self):
+        if not self.is_tracking or not self.hand_tracker:
+            return
+        hand_landmarks_list, frame = self.hand_tracker.get_hand_landmarks(return_frame=True)
+        if frame is not None:
+            label_size = self.preview_label.size()
+            frame = cv2.resize(frame, (label_size.width(), label_size.height()), interpolation=cv2.INTER_LINEAR)
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            self.preview_label.setPixmap(QPixmap.fromImage(qt_image))
         if hand_landmarks_list:
-            # Only use the first hand for cursor control
             self.gesture_controller.recognize_gesture(hand_landmarks_list[0])
+            self.status.showMessage("Hand detected.")
+        else:
+            # If hand lost, always release mouse if dragging
+            if self.gesture_controller.is_dragging:
+                pyautogui.mouseUp()
+                self.gesture_controller.is_dragging = False
+            self.status.showMessage("No hand detected.")
 
     def restore_preferences(self):
         # Restore sensitivity and thresholds from config
@@ -243,8 +245,8 @@ class MainWindow(QMainWindow):
             self.voice_controller.stop()
 
     def closeEvent(self, event: QCloseEvent):
-        if self.hand_thread:
-            self.hand_thread.stop()
+        if self.is_tracking:
+            self.stop_hand_tracking()
         self.hand_tracker.release()
         self.voice_controller.stop()
         self.save_preferences()
