@@ -16,6 +16,8 @@ from src.voice_controller import VoiceController
 
 APP_NAME = "Invisible Mouse - Hand & Voice Control"
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+PREVIEW_WIDTH = 800
+PREVIEW_HEIGHT = 600
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
@@ -78,7 +80,7 @@ class MainWindow(QMainWindow):
         QApplication.setApplicationName(APP_NAME)
         self.config = load_config()
         try:
-            self.hand_tracker = HandTracker()
+            self.hand_tracker = HandTracker(frame_width=PREVIEW_WIDTH, frame_height=PREVIEW_HEIGHT)
         except RuntimeError as e:
             self.show_camera_error(str(e))
             self.hand_tracker = None
@@ -95,7 +97,7 @@ class MainWindow(QMainWindow):
         self.stop_btn = QPushButton("Stop Hand Tracking")
         self.voice_toggle = QCheckBox("Enable Voice Control")
         self.preview_label = QLabel()
-        self.preview_label.setFixedSize(480, 360)
+        self.preview_label.setFixedSize(PREVIEW_WIDTH, PREVIEW_HEIGHT)
         self.sensitivity_slider = QSlider(Qt.Horizontal)
         self.sensitivity_slider.setMinimum(1)
         self.sensitivity_slider.setMaximum(300)
