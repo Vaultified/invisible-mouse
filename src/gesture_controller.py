@@ -41,7 +41,6 @@ class GestureController:
             print("No hand landmarks or not enough landmarks detected.")
             return
         x_norm, y_norm, _ = hand_landmarks[8]
-        print(f"Index finger tip (normalized): x={x_norm:.3f}, y={y_norm:.3f}")
         # Dead zone: ignore small movements
         if self.prev_x is not None and self.prev_y is not None:
             prev_x_norm = self.prev_x / self.screen_width
